@@ -1,21 +1,11 @@
-FROM rust:1.84.0 AS builder
-WORKDIR /usr/src/glycerine
+FROM alpine:latest
 
-# Overview
-# Copy Cargo.toml and Cargo.lock
-# Create an empty main.rs file to allow cargo to compile and build dependencies
-# Remove the empty main.rs and copy over the actual source code
-# This way the dependencies should remain cached
+RUN apk update
+RUN apk add --no-cache curl inotify-tools bash
 
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release
-RUN rm -rf src
+COPY ./monitor.sh ./monitor.sh
+COPY ./qbit.sh ./qbit.sh
+RUN chmod +x ./monitor.sh
+RUN chmod +x ./qbit.sh
 
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/src/glycerine/target/release/glycerine /usr/local/bin/glycerine
-CMD ["glycerine"]
+CMD ["./monitor.sh"]
