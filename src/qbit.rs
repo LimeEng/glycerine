@@ -1,6 +1,11 @@
+use anyhow::{Context, bail};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use url::Url;
+
+const API_LOGIN_PATH: &str = "/api/v2/auth/login";
+const API_SET_PREFERENCES_PATH: &str = "/api/v2/app/setPreferences";
+const API_GET_PREFERENCES_PATH: &str = "/api/v2/app/preferences";
 
 #[derive(Debug)]
 pub struct QBit {
@@ -11,15 +16,17 @@ pub struct QBit {
 }
 
 impl QBit {
-    #[must_use]
-    pub fn new(url: Url, username: String, password: String) -> Self {
-        let client = Client::builder().cookie_store(true).build().unwrap();
-        Self {
+    pub fn new(url: Url, username: String, password: String) -> anyhow::Result<Self> {
+        let client = Client::builder()
+            .cookie_store(true)
+            .build()
+            .context("failed to construct HTTP client")?;
+        Ok(Self {
             client,
             url,
             username,
             password,
-        }
+        })
     }
 }
 
@@ -34,8 +41,8 @@ struct Preferences {
 }
 
 impl QBit {
-    async fn login(&self) -> Result<bool, reqwest::Error> {
-        let target = self.url.join("/api/v2/auth/login").unwrap();
+    async fn login(&self) -> anyhow::Result<()> {
+        let target = self.url.join(API_LOGIN_PATH)?;
 
         let params = [
             ("username", self.username.as_str()),
@@ -43,13 +50,17 @@ impl QBit {
         ];
 
         let response = self.client.post(target).form(&params).send().await?;
-        Ok(response.status().is_success())
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            bail!("failed to login to qbittorrent")
+        }
     }
 
-    async fn update_port(&self, port: u16) -> Result<bool, reqwest::Error> {
-        let target = self.url.join("/api/v2/app/setPreferences").unwrap();
+    async fn update_port(&self, port: u16) -> anyhow::Result<()> {
+        let target = self.url.join(API_SET_PREFERENCES_PATH)?;
 
-        let json = serde_json::to_string(&PreferencePayload { listen_port: port }).unwrap();
+        let json = serde_json::to_string(&PreferencePayload { listen_port: port })?;
 
         let response = self
             .client
@@ -57,11 +68,15 @@ impl QBit {
             .form(&[("json", json)])
             .send()
             .await?;
-        Ok(response.status().is_success())
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            bail!("failed to update port of qbittorrent")
+        }
     }
 
-    async fn get_port(&self) -> Result<u16, reqwest::Error> {
-        let target = self.url.join("/api/v2/app/preferences").unwrap();
+    async fn get_port(&self) -> anyhow::Result<u16> {
+        let target = self.url.join(API_GET_PREFERENCES_PATH)?;
 
         let response = self.client.get(target).send().await?;
         let preferences: Preferences = response.json().await?;
@@ -69,24 +84,21 @@ impl QBit {
         Ok(preferences.listen_port)
     }
 
-    pub async fn update(&self, port: u16) -> Result<bool, reqwest::Error> {
-        let mut update_result = self.update_port(port).await?;
+    pub async fn update(&self, port: u16) -> anyhow::Result<()> {
+        let mut update_result = self.update_port(port).await.is_ok();
         if !update_result {
-            if self.login().await? {
-                tracing::info!("Logged in to qbittorrent");
-                update_result = self.update_port(port).await?;
-            } else {
-                tracing::error!("Failed to login to qbittorrent");
-            }
+            let () = self.login().await?;
+            tracing::info!("Logged in to qbittorrent");
+            update_result = self.update_port(port).await.is_ok();
         }
+
         if update_result {
             let response = self.get_port().await?;
             if response == port {
-                tracing::info!("Updated qbittorrent port to {port}");
-                return Ok(true);
+                return Ok(());
             }
         }
-        tracing::error!("Failed to update qbittorrent port to {port}");
-        Ok(false)
+
+        bail!("failed to update qbittorrent port to {port}")
     }
 }

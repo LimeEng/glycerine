@@ -1,29 +1,39 @@
+use anyhow::Context;
 use reqwest::Client;
 use serde::Deserialize;
 use url::Url;
+
+const API_PORTFORWARD_PATH: &str = "/v1/portforward";
 
 #[derive(Deserialize)]
 struct PortResponse {
     port: u16,
 }
 
-pub async fn fetch_port(client: &Client, gluetun_url: &Url) -> Option<u16> {
-    let target = gluetun_url
-        .join("/v1/openvpn/portforwarded")
-        .expect("Invalid URL");
+pub struct Gluetun {
+    client: Client,
+    url: Url,
+}
 
-    let result = client.get(target).send().await;
+impl Gluetun {
+    pub fn new(url: Url) -> anyhow::Result<Self> {
+        let client = Client::new();
+        Ok(Self { client, url })
+    }
+}
 
-    if let Ok(response) = result {
-        let data = response.json::<PortResponse>().await;
-        if let Ok(data) = data {
-            Some(data.port)
-        } else {
-            tracing::error!("Gluetun API error");
-            None
-        }
-    } else {
-        tracing::error!("Failed to connect to Gluetun API");
-        None
+impl Gluetun {
+    pub async fn fetch_port(&self) -> anyhow::Result<u16> {
+        let portforward_url = self.url.join(API_PORTFORWARD_PATH).context("invalid URL")?;
+
+        self.client
+            .get(portforward_url)
+            .send()
+            .await
+            .context("failed to connect to Gluetun API")?
+            .json::<PortResponse>()
+            .await
+            .context("Gluetun API error")
+            .map(|data| data.port)
     }
 }

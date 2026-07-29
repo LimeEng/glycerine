@@ -1,4 +1,4 @@
-FROM rust:1.84.0 AS builder
+FROM rust:1.97.1 AS builder
 WORKDIR /usr/src/glycerine
 
 # Overview
@@ -8,14 +8,17 @@ WORKDIR /usr/src/glycerine
 # This way the dependencies should remain cached
 
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release
-RUN rm -rf src
+RUN mkdir src && printf 'fn main() {}\n' > src/main.rs \
+    && cargo build --release --locked \
+    && rm -rf src
 
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --locked
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM debian:trixie-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /usr/src/glycerine/target/release/glycerine /usr/local/bin/glycerine
 CMD ["glycerine"]
